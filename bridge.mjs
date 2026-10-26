@@ -45,6 +45,7 @@ export async function createBridge({ port, token, timeoutMs = 45000 }) {
     if (req.method !== 'POST' || req.url !== '/command') { reply(404, { error: 'Not found' }); return; }
     if (!plugin || plugin.readyState !== WebSocket.OPEN) { reply(409, { error: 'Open the Figma Local Bridge development plugin in the Figma file first.' }); return; }
     if (busy) { reply(409, { error: 'Figma is executing another command. Wait for it to finish.' }); return; }
+    const targetPlugin = plugin;
     let ownsCommand = false;
     try {
       const parts = []; let size = 0;
@@ -58,18 +59,28 @@ export async function createBridge({ port, token, timeoutMs = 45000 }) {
         reply(400, { error: 'action and targetDocumentId are required. Call document first.' }); return;
       }
       if (busy) { reply(409, { error: 'Figma is busy.' }); return; }
+      if (plugin !== targetPlugin || targetPlugin.readyState !== WebSocket.OPEN) {
+        reply(409, { error: 'Figma connection changed while receiving the command. Read the document again.' }); return;
+      }
       const id = randomUUID();
       busy = true;
       ownsCommand = true;
       const result = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
-          pending.delete(id);
+          if (!pending.delete(id)) return;
           // Timeout does not imply cancellation. Disconnect so a late mutation cannot be mistaken for a retry.
-          plugin?.close(1011, 'Command timeout; inspect canvas before retry');
+          targetPlugin.close(1011, 'Command timeout; inspect canvas before retry');
           reject(new Error('Command timed out; it may have changed the canvas. Inspect before retrying.'));
         }, timeoutMs);
-        pending.set(id, { resolve, reject, timer });
-        plugin.send(JSON.stringify({ ...command, id }));
+        pending.set(id, { resolve, reject, timer, socket:targetPlugin });
+        const rejectSend = error => {
+          if (!pending.delete(id)) return;
+          clearTimeout(timer);
+          reject(error);
+        };
+        try {
+          targetPlugin.send(JSON.stringify({ ...command, id }), error => { if (error) rejectSend(error); });
+        } catch (error) { rejectSend(error); }
       });
       reply(200, result);
     } catch (error) { reply(500, { error: error.message }); }
@@ -100,7 +111,7 @@ export async function createBridge({ port, token, timeoutMs = 45000 }) {
           ws.send(JSON.stringify({ type: 'connected' })); return;
         }
         const item = pending.get(message.id);
-        if (item && ws === plugin) { clearTimeout(item.timer); pending.delete(message.id); item.resolve(message.result); }
+        if (item && ws === plugin && ws === item.socket) { clearTimeout(item.timer); pending.delete(message.id); item.resolve(message.result); }
       } catch { ws.close(1008, 'Invalid message'); }
     });
     ws.on('close', () => {

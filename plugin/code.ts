@@ -26,6 +26,7 @@ type Command = {
 };
 const documentId = `figma-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const loadedFonts = new Map<string, Promise<void>>();
+const knownNodes = new Map<string, BaseNode>();
 function loadFont(font: FontName) {
   const key = `${font.family}\n${font.style}`;
   let pending = loadedFonts.get(key);
@@ -66,8 +67,9 @@ function validateScene(nodes: Spec[], depth = 0, count = { n: 0 }) {
   }
 }
 async function getScene(id: string): Promise<SceneNode> {
-  const node = await figma.getNodeByIdAsync(id);
-  if (!node || node.type === 'DOCUMENT' || node.type === 'PAGE') throw new Error(`Scene node not found: ${id}`);
+  const node = knownNodes.get(id) ?? await figma.getNodeByIdAsync(id);
+  if (!node || node.removed || node.type === 'DOCUMENT' || node.type === 'PAGE') throw new Error(`Scene node not found: ${id}`);
+  knownNodes.set(node.id,node);
   return node;
 }
 async function apply(node: SceneNode, p: Props) {
@@ -119,9 +121,10 @@ async function apply(node: SceneNode, p: Props) {
 }
 function describe(node: BaseNode, depth: number, budget: { remaining: number }): unknown {
   if (--budget.remaining < 0) return { truncated:true };
+  knownNodes.set(node.id,node);
   const out: Record<string,unknown> = { id:node.id,name:node.name,type:node.type };
   if ('width' in node) Object.assign(out,{x:node.x,y:node.y,width:node.width,height:node.height});
-  if (node.type === 'TEXT') Object.assign(out,{text:node.characters,fontName:node.fontName,fontSize:node.fontSize});
+  if (node.type === 'TEXT') Object.assign(out,{text:node.characters,fontName:node.fontName === figma.mixed ? 'mixed' : node.fontName,fontSize:node.fontSize === figma.mixed ? 'mixed' : node.fontSize});
   if ('layoutMode' in node) Object.assign(out,{layout:node.layoutMode,gap:node.itemSpacing});
   if ('fills' in node && node.fills !== figma.mixed) out.fills = node.fills;
   if ('children' in node) {
@@ -133,7 +136,7 @@ function describe(node: BaseNode, depth: number, budget: { remaining: number }):
 async function execute(c: Command): Promise<unknown> {
   if (c.targetDocumentId !== documentId) throw new Error('Target document changed. Read document again before editing.');
   if (c.pageId) {
-    const page = await figma.getNodeByIdAsync(c.pageId);
+    const page = figma.root.children.find(p=>p.id === c.pageId);
     if (!page || page.type !== 'PAGE') throw new Error('Page not found.');
     await figma.setCurrentPageAsync(page);
   }
@@ -202,12 +205,15 @@ async function execute(c: Command): Promise<unknown> {
     case 'move_to_page': {
       if (!c.nodeIds?.length || c.nodeIds.length > 50) throw new Error('Provide 1–50 frame IDs.');
       const nodes = await Promise.all(c.nodeIds.map(getScene));
+      const selectedIds = new Set(nodes.map(node=>node.id));
       for (const node of nodes) {
         if (node.type !== 'FRAME') throw new Error('Only FRAME nodes can be moved to the page.');
         let ancestor: BaseNode | null = node.parent;
-        while (ancestor && ancestor.type !== 'PAGE') ancestor = ancestor.parent;
+        while (ancestor && ancestor.type !== 'PAGE') {
+          if (selectedIds.has(ancestor.id)) throw new Error('Do not move a frame and any selected ancestor together.');
+          ancestor = ancestor.parent;
+        }
         if (ancestor?.id !== figma.currentPage.id) throw new Error('Frames must belong to the current page.');
-        if (nodes.some(other => other !== node && node.parent === other)) throw new Error('Do not move a frame and its parent together.');
       }
       const positions = nodes.map(node => node.absoluteTransform);
       nodes.forEach((node,index) => {

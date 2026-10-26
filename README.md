@@ -100,6 +100,8 @@ Client namespaces may add a prefix; the stable tool names are:
 
 Create/update tools take JSON **strings** in `nodesJson`/`updatesJson`. The CLI uses ordinary JSON arrays named `nodes`/`updates` instead. Read the live tool schemas for all supported properties.
 
+Document reads report mixed text `fontName` and `fontSize` as the JSON string `"mixed"`. Exact node handles returned by bounded reads are remembered for the current plugin session, including instance descendants. After reopening the plugin, read the relevant parent again before using its child IDs.
+
 Supported basics: auto-layout, padding, sizing, colors, typography, images, local components/instances and prototype navigation. Not implemented: arbitrary JavaScript evaluation, a full Figma API wrapper, variables, component variant sets, library publishing, remote component import, FigJam or Slides. Fonts must be available in the connected editor; prefer explicit font family/style after `figma_fonts`.
 
 ## CLI and examples
@@ -132,7 +134,7 @@ To stop this copy's bridge:
 npm run stop
 ```
 
-Stop is authenticated and refused while a command is in progress. If already stopped it exits non-zero without starting another bridge. Closing only the Figma plugin revokes access to its file, but the shared local process can remain running. A connected MCP client may start it again on its next command; disable the client entry first if you want it to stay off.
+Stop is authenticated and refused while a command is in progress. If already stopped it exits non-zero without starting another bridge. Closing only the Figma plugin revokes access to its file, but the shared local process can remain running. Starting a new MCP connection or running `npm run status` can start it again. An existing MCP connection does not automatically restart a stopped bridge; reconnect the MCP client or run `npm run status` to recover. Disable the client entry first if you want it to stay off.
 
 For foreground diagnostics, stop the background bridge first, then run `npm run bridge` and use Ctrl+C to stop it.
 
@@ -149,6 +151,8 @@ For foreground diagnostics, stop the background bridge first, then run `npm run 
 | Another plugin connected | Close the previous file's plugin before connecting another. |
 | Target document changed | Read `figma_document` again; use its new `documentId`. |
 | Missing font | Use `figma_fonts` to find an available exact family/style. |
+| Command failed, but bridge connected | The plugin shows the exact command error separately from the connection status. A failed read does not imply a disconnected bridge. Failed writes may have partially applied: inspect the canvas before retrying. |
+| Unable to establish connection to Figma after 10 seconds | A Figma API operation failed. Check `figma_status` before restarting the local bridge; it may still be connected. For a nested node, read its known parent first and use the exact returned child ID in the same plugin session. |
 | Timeout / partial error | The design may already have changed. Inspect it before reconnecting or retrying; never blindly replay a write. |
 | Bridge will not start | Read your private `.local/bridge.log`, redacting file/session data before sharing it. |
 

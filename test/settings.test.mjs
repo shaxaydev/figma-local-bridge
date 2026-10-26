@@ -33,3 +33,11 @@ test('custom port and plugin ID persist; invalid settings fail closed',async t=>
   await assert.rejects(load(path),/pluginId must/);
   assert.ok((await readFile(join(path,'settings.json'),'utf8')).includes('pluginId'));
 });
+
+test('pairing tokens must be strings rather than coercible JSON values',async t=>{
+  const path=await temporary(t);
+  for (const token of [['a'.repeat(64)],null,{}]) {
+    await writeFile(join(path,'settings.json'),JSON.stringify({port:3848,token}));
+    await assert.rejects(load(path),/Invalid local settings/);
+  }
+});

@@ -18,7 +18,7 @@ export async function settings() {
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     value = JSON.parse(await readFile(path, 'utf8'));
   }
-  if (!value || !Number.isInteger(value.port) || value.port < 1 || value.port > 65535 || !/^[a-f0-9]{64}$/.test(value.token)) {
+  if (!value || !Number.isInteger(value.port) || value.port < 1 || value.port > 65535 || typeof value.token !== 'string' || !/^[a-f0-9]{64}$/.test(value.token)) {
     throw new Error('Invalid local settings: port must be 1–65535 and token must be 64 lowercase hexadecimal characters.');
   }
   if (value.pluginId !== undefined && (typeof value.pluginId !== 'string' || !/^\d+$/.test(value.pluginId))) throw new Error('pluginId must be the numeric string issued by Figma.');
